@@ -1,0 +1,347 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meeting Action Item Extractor</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background: #f1f5f9;
+    margin: 0;
+    padding: 30px;
+    color: #1e293b;
+}
+
+.container {
+    max-width: 850px;
+    margin: auto;
+    background: white;
+    padding: 30px;
+    border-radius: 15px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.08);
+}
+
+h1 {
+    text-align: center;
+    color: #2563eb;
+}
+
+.subtitle {
+    text-align: center;
+    color: #64748b;
+    margin-bottom: 25px;
+}
+
+label {
+    font-weight: bold;
+    display: block;
+    margin: 15px 0 8px;
+}
+
+textarea {
+    width: 100%;
+    height: 190px;
+    padding: 15px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 15px;
+    resize: vertical;
+}
+
+select {
+    width: 100%;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #cbd5e1;
+    font-size: 15px;
+}
+
+input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 15px;
+}
+
+button {
+    width: 100%;
+    padding: 14px;
+    margin-top: 20px;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #1d4ed8;
+}
+
+.result {
+    margin-top: 25px;
+}
+
+.action-card {
+    background: #eff6ff;
+    border-left: 5px solid #2563eb;
+    padding: 15px;
+    margin: 12px 0;
+    border-radius: 8px;
+}
+
+.action-card h3 {
+    margin-top: 0;
+}
+
+.info {
+    color: #475569;
+    font-size: 14px;
+}
+
+.hidden {
+    display: none;
+}
+
+.status {
+    margin-top: 15px;
+    color: #dc2626;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>📋 Meeting Action Item Extractor</h1>
+
+    <p class="subtitle">
+        Convert meeting notes into organized tasks automatically.
+    </p>
+
+    <label>Meeting Notes</label>
+
+    <textarea id="notes">Website revamp kickoff
+Alex: What are the main features you want on the new landing page?
+Client: We need a modern hero section, customer testimonials, and an integrated booking calendar.
+Alex: Would you prefer Calendly integration or a custom-built solution?
+Client: Calendly works fine and keeps it simple.
+Alex: Perfect, I'll prepare the initial wireframes by Wednesday.</textarea>
+
+    <label>Extraction Mode</label>
+
+    <select id="mode" onchange="toggleAPI()">
+        <option value="offline">Offline</option>
+        <option value="live">Gemini Flash API</option>
+    </select>
+
+    <div id="apiSection" class="hidden">
+        <label>Gemini API Key</label>
+        <input type="password" id="apiKey" placeholder="Enter your Gemini API key">
+    </div>
+
+    <button onclick="extractActions()">
+        ✓ Extract Action Items
+    </button>
+
+    <div id="status" class="status"></div>
+
+    <div id="result" class="result"></div>
+
+</div>
+
+<script>
+
+function toggleAPI() {
+    const mode = document.getElementById("mode").value;
+
+    document.getElementById("apiSection").classList.toggle(
+        "hidden", mode !== "live"
+    );
+}
+
+// OFFLINE EXTRACTION
+
+function offlineExtract(notes) {
+
+    let actions = [];
+
+    const pattern = /^([^:\n]+):\s*(.+?)\s+by\s+([^\n.]+)[.]?$/i;
+
+    notes.split("\n").forEach(line => {
+
+        const match = line.trim().match(pattern);
+
+        if (match) {
+            actions.push({
+                owner: match[1].trim(),
+                task: match[2].trim(),
+                deadline: match[3].trim()
+            });
+        }
+
+    });
+
+    return actions;
+}
+
+// GEMINI LIVE EXTRACTION
+
+async function liveExtract(notes) {
+
+    const key = document.getElementById("apiKey").value.trim();
+
+    if (!key) {
+        throw new Error("Please enter your Gemini API key.");
+    }
+
+    const model = "gemini-3.5-flash-lite";
+
+    const prompt = `
+Extract action items from the following meeting notes.
+
+Return only JSON:
+{
+  "actions": [
+    {
+      "owner": "string",
+      "task": "string",
+      "deadline": "string"
+    }
+  ]
+}
+
+Use "Not specified" if an owner or deadline is missing.
+Do not invent actions, dates or owners.
+Preserve relative deadlines exactly as written.
+
+Meeting notes:
+${JSON.stringify(notes)}
+`;
+
+    const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "x-goog-api-key": key
+            },
+            body: JSON.stringify({
+                contents: [{
+                    parts: [{ text: prompt }]
+                }],
+                generationConfig: {
+                    responseMimeType: "application/json"
+                }
+            })
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error("Gemini API request failed.");
+    }
+
+    const data = await response.json();
+
+    const raw = data.candidates[0].content.parts[0].text;
+
+    const result = JSON.parse(raw);
+
+    if (!result || !Array.isArray(result.actions)) {
+        throw new Error("Invalid response from Gemini.");
+    }
+
+    return result.actions;
+}
+
+// MAIN FUNCTION
+
+async function extractActions() {
+
+    const notes = document.getElementById("notes").value.trim();
+    const mode = document.getElementById("mode").value;
+
+    const resultDiv = document.getElementById("result");
+    const status = document.getElementById("status");
+
+    resultDiv.innerHTML = "";
+    status.textContent = "";
+
+    if (!notes) {
+        status.textContent = "Please enter meeting notes first.";
+        return;
+    }
+
+    status.style.color = "#2563eb";
+    status.textContent = "Extracting action items...";
+
+    try {
+
+        const actions = mode === "offline"
+            ? offlineExtract(notes)
+            : await liveExtract(notes);
+
+        status.textContent = "";
+
+        if (actions.length === 0) {
+            resultDiv.innerHTML =
+                "<p>No actions found. Offline mode requires: Name: task by deadline</p>";
+            return;
+        }
+
+        resultDiv.innerHTML = "<h2>Extracted Action Items</h2>";
+
+        actions.forEach((action, index) => {
+
+            const card = document.createElement("div");
+            card.className = "action-card";
+
+            const title = document.createElement("h3");
+            title.textContent = `${index + 1}. ${action.task}`;
+
+            const owner = document.createElement("p");
+            owner.className = "info";
+            owner.textContent = "Owner: " + action.owner;
+
+            const deadline = document.createElement("p");
+            deadline.className = "info";
+            deadline.textContent = "Deadline: " + action.deadline;
+
+            card.append(title, owner, deadline);
+            resultDiv.appendChild(card);
+
+        });
+
+        const note = document.createElement("p");
+        note.className = "info";
+        note.textContent =
+            "Review every action item against the original meeting notes.";
+
+        resultDiv.appendChild(note);
+
+    } catch (error) {
+
+        status.style.color = "#dc2626";
+        status.textContent = error.message;
+
+    }
+
+}
+
+</script>
+
+</body>
+</html>
+```
